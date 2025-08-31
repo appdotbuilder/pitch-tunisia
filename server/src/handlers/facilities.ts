@@ -1,11 +1,27 @@
+import { db } from '../db';
+import { facilitiesTable, usersTable } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import { type CreateFacilityInput, type Facility, type Pitch, type Review } from '../schema';
 
 export async function createFacility(input: CreateFacilityInput): Promise<Facility> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is creating a new facility and associating it with
-    // the facility owner.
-    return Promise.resolve({
-        id: 0,
+  try {
+    // Verify that the owner exists and is a facility owner
+    const owner = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, input.owner_id))
+      .execute();
+
+    if (owner.length === 0) {
+      throw new Error('Owner not found');
+    }
+
+    if (owner[0].role !== 'facility_owner') {
+      throw new Error('User is not a facility owner');
+    }
+
+    // Insert facility record
+    const result = await db.insert(facilitiesTable)
+      .values({
         owner_id: input.owner_id,
         name: input.name,
         description: input.description,
@@ -13,14 +29,22 @@ export async function createFacility(input: CreateFacilityInput): Promise<Facili
         city: input.city,
         phone: input.phone,
         email: input.email,
-        rating: null,
         amenities: input.amenities,
         latitude: input.latitude,
-        longitude: input.longitude,
-        is_active: true,
-        created_at: new Date(),
-        updated_at: new Date()
-    } as Facility);
+        longitude: input.longitude
+      })
+      .returning()
+      .execute();
+
+    const facility = result[0];
+    return {
+      ...facility,
+      amenities: facility.amenities as string[]
+    };
+  } catch (error) {
+    console.error('Facility creation failed:', error);
+    throw error;
+  }
 }
 
 export async function getFacilitiesByOwner(ownerId: number): Promise<Facility[]> {

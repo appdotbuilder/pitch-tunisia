@@ -1,4 +1,7 @@
+import { db } from '../db';
+import { staffPermissionsTable, facilitiesTable } from '../db/schema';
 import { type StaffPermission } from '../schema';
+import { eq, and } from 'drizzle-orm';
 
 export async function createStaffMember(
     facilityOwnerId: number,
@@ -7,18 +10,41 @@ export async function createStaffMember(
     roleName: string,
     permissions: string[]
 ): Promise<StaffPermission> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is creating staff member with specific role
-    // and permissions for a facility, ensuring owner has rights to facility.
-    return Promise.resolve({
-        id: 0,
-        staff_id: staffUserId,
-        facility_id: facilityId,
-        role_name: roleName,
-        permissions,
-        created_at: new Date(),
-        updated_at: new Date()
-    } as StaffPermission);
+    try {
+        // Verify that the facility owner actually owns the facility
+        const facility = await db.select()
+            .from(facilitiesTable)
+            .where(eq(facilitiesTable.id, facilityId))
+            .execute();
+
+        if (facility.length === 0) {
+            throw new Error('Facility not found');
+        }
+
+        if (facility[0].owner_id !== facilityOwnerId) {
+            throw new Error('Only facility owner can add staff members');
+        }
+
+        // Create staff permission record
+        const result = await db.insert(staffPermissionsTable)
+            .values({
+                staff_id: staffUserId,
+                facility_id: facilityId,
+                role_name: roleName,
+                permissions: permissions
+            })
+            .returning()
+            .execute();
+
+        const staffPermission = result[0];
+        return {
+            ...staffPermission,
+            permissions: staffPermission.permissions as string[]
+        };
+    } catch (error) {
+        console.error('Staff member creation failed:', error);
+        throw error;
+    }
 }
 
 export async function updateStaffPermissions(
@@ -26,34 +52,134 @@ export async function updateStaffPermissions(
     permissions: string[],
     ownerId: number
 ): Promise<StaffPermission> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is updating staff member permissions,
-    // ensuring only facility owner can modify permissions.
-    return Promise.resolve({} as StaffPermission);
+    try {
+        // Get the staff permission record to verify ownership
+        const staffPermissions = await db.select({
+            staff_permission: staffPermissionsTable,
+            facility: facilitiesTable
+        })
+            .from(staffPermissionsTable)
+            .innerJoin(facilitiesTable, eq(staffPermissionsTable.facility_id, facilitiesTable.id))
+            .where(eq(staffPermissionsTable.id, staffPermissionId))
+            .execute();
+
+        if (staffPermissions.length === 0) {
+            throw new Error('Staff permission record not found');
+        }
+
+        if (staffPermissions[0].facility.owner_id !== ownerId) {
+            throw new Error('Only facility owner can update staff permissions');
+        }
+
+        // Update permissions
+        const result = await db.update(staffPermissionsTable)
+            .set({
+                permissions: permissions,
+                updated_at: new Date()
+            })
+            .where(eq(staffPermissionsTable.id, staffPermissionId))
+            .returning()
+            .execute();
+
+        const staffPermission = result[0];
+        return {
+            ...staffPermission,
+            permissions: staffPermission.permissions as string[]
+        };
+    } catch (error) {
+        console.error('Staff permissions update failed:', error);
+        throw error;
+    }
 }
 
 export async function getStaffPermissions(staffId: number, facilityId: number): Promise<StaffPermission | null> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is fetching staff member's permissions for
-    // a specific facility to control access to features.
-    return Promise.resolve(null);
+    try {
+        const result = await db.select()
+            .from(staffPermissionsTable)
+            .where(
+                and(
+                    eq(staffPermissionsTable.staff_id, staffId),
+                    eq(staffPermissionsTable.facility_id, facilityId)
+                )
+            )
+            .execute();
+
+        if (result.length === 0) return null;
+        
+        const staffPermission = result[0];
+        return {
+            ...staffPermission,
+            permissions: staffPermission.permissions as string[]
+        };
+    } catch (error) {
+        console.error('Get staff permissions failed:', error);
+        throw error;
+    }
 }
 
 export async function getFacilityStaff(facilityId: number, ownerId: number): Promise<StaffPermission[]> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is fetching all staff members for a facility
-    // for facility owner management interface.
-    return Promise.resolve([]);
+    try {
+        // Verify facility ownership first
+        const facility = await db.select()
+            .from(facilitiesTable)
+            .where(eq(facilitiesTable.id, facilityId))
+            .execute();
+
+        if (facility.length === 0) {
+            throw new Error('Facility not found');
+        }
+
+        if (facility[0].owner_id !== ownerId) {
+            throw new Error('Only facility owner can view staff list');
+        }
+
+        // Get all staff for the facility
+        const result = await db.select()
+            .from(staffPermissionsTable)
+            .where(eq(staffPermissionsTable.facility_id, facilityId))
+            .execute();
+
+        return result.map(staffPermission => ({
+            ...staffPermission,
+            permissions: staffPermission.permissions as string[]
+        }));
+    } catch (error) {
+        console.error('Get facility staff failed:', error);
+        throw error;
+    }
 }
 
 export async function removeStaffMember(
     staffPermissionId: number,
     ownerId: number
 ): Promise<void> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is removing staff member access to facility,
-    // ensuring only facility owner can remove staff.
-    return Promise.resolve();
+    try {
+        // Get the staff permission record to verify ownership
+        const staffPermissions = await db.select({
+            staff_permission: staffPermissionsTable,
+            facility: facilitiesTable
+        })
+            .from(staffPermissionsTable)
+            .innerJoin(facilitiesTable, eq(staffPermissionsTable.facility_id, facilitiesTable.id))
+            .where(eq(staffPermissionsTable.id, staffPermissionId))
+            .execute();
+
+        if (staffPermissions.length === 0) {
+            throw new Error('Staff permission record not found');
+        }
+
+        if (staffPermissions[0].facility.owner_id !== ownerId) {
+            throw new Error('Only facility owner can remove staff members');
+        }
+
+        // Remove staff permission record
+        await db.delete(staffPermissionsTable)
+            .where(eq(staffPermissionsTable.id, staffPermissionId))
+            .execute();
+    } catch (error) {
+        console.error('Staff member removal failed:', error);
+        throw error;
+    }
 }
 
 export async function checkStaffPermission(
@@ -61,10 +187,27 @@ export async function checkStaffPermission(
     facilityId: number,
     requiredPermission: string
 ): Promise<boolean> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is checking if staff member has specific
-    // permission for performing actions on facility resources.
-    return Promise.resolve(false);
+    try {
+        const staffPermissions = await db.select()
+            .from(staffPermissionsTable)
+            .where(
+                and(
+                    eq(staffPermissionsTable.staff_id, staffId),
+                    eq(staffPermissionsTable.facility_id, facilityId)
+                )
+            )
+            .execute();
+
+        if (staffPermissions.length === 0) {
+            return false;
+        }
+
+        const permissions = staffPermissions[0].permissions as string[];
+        return permissions.includes(requiredPermission);
+    } catch (error) {
+        console.error('Check staff permission failed:', error);
+        throw error;
+    }
 }
 
 export async function getStaffFacilities(staffId: number): Promise<{
@@ -73,8 +216,24 @@ export async function getStaffFacilities(staffId: number): Promise<{
     roleName: string;
     permissions: string[];
 }[]> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is fetching all facilities where user has
-    // staff access for staff member dashboard.
-    return Promise.resolve([]);
+    try {
+        const result = await db.select({
+            staff_permission: staffPermissionsTable,
+            facility: facilitiesTable
+        })
+            .from(staffPermissionsTable)
+            .innerJoin(facilitiesTable, eq(staffPermissionsTable.facility_id, facilitiesTable.id))
+            .where(eq(staffPermissionsTable.staff_id, staffId))
+            .execute();
+
+        return result.map(row => ({
+            facilityId: row.facility.id,
+            facilityName: row.facility.name,
+            roleName: row.staff_permission.role_name,
+            permissions: row.staff_permission.permissions as string[]
+        }));
+    } catch (error) {
+        console.error('Get staff facilities failed:', error);
+        throw error;
+    }
 }

@@ -5,29 +5,58 @@ import {
     type TournamentMatch,
     type UpdateTournamentStatusInput 
 } from '../schema';
+import { db } from '../db';
+import { tournamentsTable, usersTable } from '../db/schema';
+import { eq } from 'drizzle-orm';
 
 export async function createTournament(input: CreateTournamentInput): Promise<Tournament> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is creating a new tournament in draft status
-    // and generating the initial bracket structure.
-    return Promise.resolve({
-        id: 0,
+  try {
+    // First verify that the organizer exists and has the appropriate role
+    const organizer = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, input.organizer_id))
+      .execute();
+
+    if (organizer.length === 0) {
+      throw new Error(`User with ID ${input.organizer_id} not found`);
+    }
+
+    const organizerData = organizer[0];
+    if (organizerData.role !== 'tournament_organizer' && organizerData.role !== 'admin') {
+      throw new Error('User does not have permission to organize tournaments');
+    }
+
+    // Insert tournament record
+    const result = await db.insert(tournamentsTable)
+      .values({
         organizer_id: input.organizer_id,
         name: input.name,
         description: input.description,
         bracket_type: input.bracket_type,
-        entry_fee: input.entry_fee,
+        entry_fee: input.entry_fee.toString(), // Convert number to string for numeric column
         max_participants: input.max_participants,
         registration_start: new Date(input.registration_start),
         registration_end: new Date(input.registration_end),
         tournament_start: new Date(input.tournament_start),
         tournament_end: new Date(input.tournament_end),
-        status: 'draft',
+        status: 'draft', // Always create tournaments in draft status
         rules: input.rules,
-        prize_pool: input.prize_pool,
-        created_at: new Date(),
-        updated_at: new Date()
-    } as Tournament);
+        prize_pool: input.prize_pool ? input.prize_pool.toString() : null // Convert number to string for numeric column
+      })
+      .returning()
+      .execute();
+
+    // Convert numeric fields back to numbers before returning
+    const tournament = result[0];
+    return {
+      ...tournament,
+      entry_fee: parseFloat(tournament.entry_fee), // Convert string back to number
+      prize_pool: tournament.prize_pool ? parseFloat(tournament.prize_pool) : null // Convert string back to number
+    };
+  } catch (error) {
+    console.error('Tournament creation failed:', error);
+    throw error;
+  }
 }
 
 export async function updateTournamentStatus(input: UpdateTournamentStatusInput): Promise<Tournament> {
